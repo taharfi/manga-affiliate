@@ -1,14 +1,15 @@
 'use strict';
 
-// ── State ────────────────────────────────────────────────────────────────────
-let wpConfig   = {};
-let allCats    = [];
-let csvData    = {};
-let matched    = [];
-let decisions  = {};
-let currentTab = 'pending';
+// ── State ─────────────────────────────────────────────────────────────────────
+var wpConfig   = {};
+var allCats    = [];
+var csvData    = {};
+var matched    = [];
+var decisions  = {};
+var reinject   = {};   // { catId: true } — flagged for re-inject
+var currentTab = 'pending';
 
-// ── Affiliate HTML template ──────────────────────────────────────────────────
+// ── Affiliate HTML template ───────────────────────────────────────────────────
 function affiliateSection(title, url) {
   return '\n\n<!-- manga-affiliate-section -->\n' +
     '<div style="margin-top:32px;padding:22px 24px;background:#1a1a2e;border-radius:12px;border:2px solid #7c3aed;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;text-align:center;">\n' +
@@ -20,7 +21,22 @@ function affiliateSection(title, url) {
     '</div>\n' +
     '<!-- /manga-affiliate-section -->';
 }
-// ── Steps ────────────────────────────────────────────────────────────────────
+
+// Strip any existing affiliate section from a description string
+function stripOldSection(desc) {
+  if (!desc) return '';
+  // Remove everything between the comment markers (inclusive)
+  var stripped = desc.replace(/<!-- manga-affiliate-section -->[\s\S]*?<!-- \/manga-affiliate-section -->/g, '');
+  // Also strip the old plain-text version that got injected without HTML
+  stripped = stripped.replace(/❤️\s*Support the [Cc]reator[\s\S]*?qualifying purchases\./g, '');
+  stripped = stripped.replace(/📚\s*Support the [Cc]reator[\s\S]*?qualifying purchases\./g, '');
+  stripped = stripped.replace(/🛒.*?Buy on Amazon[\s\S]*?qualifying purchases\./g, '');
+  // Remove leftover </p> we may have injected before
+  stripped = stripped.replace(/<\/p>\s*$/, '');
+  return stripped.trim();
+}
+
+// ── Steps ─────────────────────────────────────────────────────────────────────
 function goStep(n) {
   document.querySelectorAll('.step').forEach(function(s, i) { s.classList.toggle('active', i === n - 1); });
   renderDots(n);
@@ -62,8 +78,7 @@ async function fetchCategories() {
   wpConfig = { wpUrl: url, wpUser: user, wpPass: pass };
 
   var btn = document.getElementById('fetch-btn');
-  btn.textContent = 'Connecting…';
-  btn.disabled = true;
+  btn.textContent = 'Connecting…'; btn.disabled = true;
 
   try {
     var res = await fetch('/api/fetch-categories', {
@@ -72,38 +87,32 @@ async function fetchCategories() {
       body: JSON.stringify(wpConfig)
     });
     var data = await res.json();
-
-    if (!res.ok) {
-      showError('Error: ' + (data.error || ('HTTP ' + res.status)));
-      return;
-    }
+    if (!res.ok) { showError('Error: ' + (data.error || ('HTTP ' + res.status))); return; }
     if (!data.categories || data.categories.length === 0) {
-      showError('No categories found. Make sure your credentials are correct and your site has categories with posts.');
+      showError('No categories found. Check your credentials and make sure your site has categories with posts.');
       return;
     }
-
     allCats = data.categories;
     buildMatches();
     goStep(2);
     renderStats();
     renderList();
-  } catch (e) {
-    showError('Could not reach the local server. Make sure "npm start" is running. Detail: ' + e.message);
+  } catch(e) {
+    showError('Could not reach the server. Detail: ' + e.message);
   } finally {
-    btn.textContent = 'Fetch manga categories →';
-    btn.disabled = false;
+    btn.textContent = 'Fetch manga categories →'; btn.disabled = false;
   }
 }
 
-// ── Demo ─────────────────────────────────────────────────────────────────────
+// ── Demo ──────────────────────────────────────────────────────────────────────
 function loadDemo() {
   clearError();
   wpConfig = { wpUrl: 'http://demo', wpUser: 'admin', wpPass: 'demo' };
   allCats = [
     { id:1, name:'One Piece',        slug:'one-piece',        description:'', count:1100, link:'https://demo.site/category/one-piece/' },
-    { id:2, name:'Naruto',           slug:'naruto',           description:'', count:700,  link:'https://demo.site/category/naruto/' },
+    { id:2, name:'Naruto',           slug:'naruto',           description:'Naruto Uzumaki is a young ninja.<!-- manga-affiliate-section --><div>OLD SECTION</div><!-- /manga-affiliate-section -->', count:700, link:'https://demo.site/category/naruto/' },
     { id:3, name:'Attack on Titan',  slug:'attack-on-titan',  description:'', count:139,  link:'https://demo.site/category/attack-on-titan/' },
-    { id:4, name:'Demon Slayer',     slug:'demon-slayer',     description:'', count:205,  link:'https://demo.site/category/demon-slayer/' },
+    { id:4, name:'Demon Slayer',     slug:'demon-slayer',     description:'Tanjiro becomes a demon slayer. Support the creator Love reading Demon Slayer? Buy on Amazon As an Amazon Associate I earn from qualifying purchases.', count:205, link:'https://demo.site/category/demon-slayer/' },
     { id:5, name:'Dragon Ball',      slug:'dragon-ball',      description:'', count:519,  link:'https://demo.site/category/dragon-ball/' },
     { id:6, name:'My Hero Academia', slug:'my-hero-academia', description:'', count:430,  link:'https://demo.site/category/my-hero-academia/' },
   ];
@@ -139,14 +148,22 @@ async function uploadCSV() {
   } catch(e) { alert('Failed to parse CSV: ' + e.message); }
 }
 
-
 // ── Matching ──────────────────────────────────────────────────────────────────
 function normalize(s) {
   return s.toLowerCase().replace(/<[^>]+>/g,'').replace(/[^a-z0-9\s]/g,'').trim();
 }
 
+function hasOldSection(desc) {
+  if (!desc) return false;
+  return desc.includes('manga-affiliate-section') ||
+         desc.includes('Support the creator') ||
+         desc.includes('Support the Creator') ||
+         desc.includes('Buy on Amazon') ||
+         desc.includes('qualifying purchases');
+}
+
 function buildMatches() {
-  matched = []; decisions = {};
+  matched = []; decisions = {}; reinject = {};
   allCats.forEach(function(cat) {
     var normName = normalize(cat.name);
     var url = null;
@@ -154,8 +171,9 @@ function buildMatches() {
       var nk = normalize(k);
       if (nk === normName || normName.includes(nk) || nk.includes(normName)) url = csvData[k];
     });
-    var alreadyHas = !!(cat.description && cat.description.includes('manga-affiliate-section'));
+    var alreadyHas = hasOldSection(cat.description);
     matched.push({ cat: cat, url: url, title: cat.name, alreadyHas: alreadyHas });
+    // If it already has a section, put in approved. If matched, pending. Else unmatched.
     decisions[cat.id] = alreadyHas ? 'approved' : (url ? 'pending' : 'unmatched');
   });
 }
@@ -164,16 +182,17 @@ function buildMatches() {
 function renderStats() {
   var counts = { pending:0, approved:0, skipped:0, unmatched:0 };
   matched.forEach(function(m) { counts[decisions[m.cat.id]]++; });
+  var reinjectCount = Object.keys(reinject).filter(function(k){ return reinject[k]; }).length;
 
   document.getElementById('stat-grid').innerHTML =
     '<div class="stat"><div class="stat-label">Total</div><div class="stat-val">' + matched.length + '</div></div>' +
     '<div class="stat"><div class="stat-label">Pending</div><div class="stat-val">' + counts.pending + '</div></div>' +
     '<div class="stat"><div class="stat-label">Approved</div><div class="stat-val green">' + counts.approved + '</div></div>' +
-    '<div class="stat"><div class="stat-label">No match</div><div class="stat-val muted">' + counts.unmatched + '</div></div>';
+    '<div class="stat"><div class="stat-label">Re-inject</div><div class="stat-val" style="color:#f59e0b;">' + reinjectCount + '</div></div>';
 
   var actionable = matched.filter(function(m){ return decisions[m.cat.id] !== 'unmatched'; }).length || 1;
-  var done       = matched.filter(function(m){ return decisions[m.cat.id] === 'approved' || decisions[m.cat.id] === 'skipped'; }).length;
-  document.getElementById('prog').style.width = Math.round(done / actionable * 100) + '%';
+  var done = matched.filter(function(m){ return decisions[m.cat.id]==='approved'||decisions[m.cat.id]==='skipped'; }).length;
+  document.getElementById('prog').style.width = Math.round(done/actionable*100) + '%';
 
   ['pending','approved','skipped','unmatched'].forEach(function(t) {
     var el = document.getElementById('t-' + t);
@@ -181,7 +200,8 @@ function renderStats() {
   });
 
   var pb = document.getElementById('publish-btn');
-  if (pb) pb.disabled = counts.approved === 0;
+  var hasWork = counts.approved > 0 || reinjectCount > 0;
+  if (pb) pb.disabled = !hasWork;
 }
 
 // ── List ──────────────────────────────────────────────────────────────────────
@@ -205,6 +225,7 @@ function renderList() {
     var cat = item.cat, url = item.url, title = item.title, alreadyHas = item.alreadyHas;
     var id = cat.id;
     var status = decisions[id];
+    var isReinject = !!reinject[id];
     var badgeMap = { pending:'badge-pending', approved:'badge-approved', skipped:'badge-skipped', unmatched:'badge-unmatched' };
 
     var currentDesc = cat.description
@@ -213,32 +234,44 @@ function renderList() {
 
     var previewBlock = url
       ? '<div class="desc-label">Section to be added</div>' +
-        '<div class="preview-box">' +
-        '<div class="preview-label">Preview</div>' +
-        '<div style="border-top:2px solid #bfdbfe;margin-top:6px;padding-top:10px;">' +
-        '<strong style="font-size:13px;">📚 Support the creator</strong>' +
-        '<p style="font-size:12px;color:#555;margin:5px 0 8px;">Love reading <strong>' + escHtml(title) + '</strong>? Get the official physical edition!</p>' +
-        '<a href="' + escHtml(url) + '" style="display:inline-block;background:#ff9900;color:#000;text-decoration:none;padding:6px 14px;border-radius:5px;font-size:12px;font-weight:700;" target="_blank">🛒 Buy on Amazon</a>' +
-        '<p style="font-size:11px;color:#aaa;margin:6px 0 0;">As an Amazon Associate I earn from qualifying purchases.</p>' +
-        '</div></div>'
-      : '<div class="desc-label">No CSV match — paste Amazon URL manually</div>' +
+        '<div style="margin-top:8px;padding:18px 20px;background:#1a1a2e;border-radius:10px;border:2px solid #7c3aed;text-align:center;">' +
+        '<p style="font-size:11px;font-weight:700;color:#a78bfa;letter-spacing:0.1em;text-transform:uppercase;margin:0 0 6px;">❤️ Support the Creator</p>' +
+        '<p style="font-size:13px;color:#e2e8f0;margin:0 0 14px;line-height:1.5;">Enjoyed reading <strong style="color:#fff;">' + escHtml(title) + '</strong>?<br>Get your official physical copy!</p>' +
+        '<a href="' + escHtml(url) + '" style="display:inline-block;background:#ff9900;color:#000;text-decoration:none;padding:11px 28px;border-radius:7px;font-size:14px;font-weight:800;" target="_blank">📖&nbsp; Get Physical Copy</a>' +
+        '<p style="font-size:11px;color:#64748b;margin:10px 0 0;font-style:italic;">Supporting creators helps bring more great manga to life.</p>' +
+        '</div>'
+      : '<div class="desc-label">No CSV match — paste URL manually</div>' +
         '<div class="manual-url-row"><input type="url" id="url-' + id + '" placeholder="https://amzn.to/..." /></div>';
 
-    var alreadyNote = alreadyHas ? '<span class="badge badge-exists" style="margin-left:6px;">already has section</span>' : '';
+    // Badge indicators
+    var alreadyNote = alreadyHas && !isReinject
+      ? '<span class="badge badge-exists" style="margin-left:6px;">has section</span>'
+      : '';
+    var reinjectNote = isReinject
+      ? '<span class="badge" style="margin-left:6px;background:#fef3c7;color:#92400e;">re-inject queued</span>'
+      : '';
 
+    // Action buttons per status
     var actionsMap = {
-      pending:   '<button class="btn success" onclick="decide(' + id + ',\'approved\')">Approve ✓</button>' +
-                 '<button class="btn" onclick="decide(' + id + ',\'skipped\')">Skip</button>',
-      approved:  alreadyHas
-                   ? '<span style="font-size:12px;color:#888;">Already updated — no action needed.</span>'
-                   : '<button class="btn danger" onclick="decide(' + id + ',\'pending\')">Undo</button>',
-      skipped:   '<button class="btn" onclick="decide(' + id + ',\'pending\')">Restore</button>',
-      unmatched: '<button class="btn success" onclick="approveManual(' + id + ')">Add & Approve</button>'
+      pending:
+        '<button class="btn success" onclick="decide(' + id + ',\'approved\')">Approve ✓</button>' +
+        '<button class="btn" onclick="decide(' + id + ',\'skipped\')">Skip</button>',
+      approved:
+        alreadyHas && !isReinject
+          ? '<button class="btn" style="background:#fef3c7;color:#92400e;border-color:#fcd34d;" onclick="queueReinject(' + id + ')">🔄 Re-inject (fix old section)</button>' +
+            '<button class="btn danger" onclick="decide(' + id + ',\'pending\')">Remove</button>'
+          : isReinject
+            ? '<button class="btn danger" onclick="cancelReinject(' + id + ')">Cancel re-inject</button>'
+            : '<button class="btn danger" onclick="decide(' + id + ',\'pending\')">Undo</button>',
+      skipped:
+        '<button class="btn" onclick="decide(' + id + ',\'pending\')">Restore</button>',
+      unmatched:
+        '<button class="btn success" onclick="approveManual(' + id + ')">Add & Approve</button>'
     };
 
     return '<div class="manga-card" id="mc-' + id + '">' +
       '<div class="manga-card-header">' +
-        '<span class="manga-title">' + escHtml(title) + alreadyNote + '</span>' +
+        '<span class="manga-title">' + escHtml(title) + alreadyNote + reinjectNote + '</span>' +
         '<span class="badge ' + badgeMap[status] + '">' + status + '</span>' +
       '</div>' +
       '<a class="manga-link" href="' + (cat.link||'#') + '" target="_blank">' + escHtml(cat.link||'') + '</a>' +
@@ -251,16 +284,30 @@ function renderList() {
   }).join('');
 }
 
+// ── Decisions ─────────────────────────────────────────────────────────────────
 function decide(id, status) {
   decisions[id] = status;
+  delete reinject[id];
+  renderStats();
+  renderList();
+}
+
+function queueReinject(id) {
+  reinject[id] = true;
+  renderStats();
+  renderList();
+}
+
+function cancelReinject(id) {
+  delete reinject[id];
   renderStats();
   renderList();
 }
 
 function approveManual(id) {
   var input = document.getElementById('url-' + id);
-  var val   = input ? input.value.trim() : '';
-  if (!val) { alert('Please paste an Amazon affiliate URL first.'); return; }
+  var val = input ? input.value.trim() : '';
+  if (!val) { alert('Please paste a URL first.'); return; }
   var m = matched.find(function(x){ return x.cat.id === id; });
   if (m) m.url = val;
   decisions[id] = 'approved';
@@ -270,14 +317,15 @@ function approveManual(id) {
 
 // ── Publish ───────────────────────────────────────────────────────────────────
 function goToPublish() {
-  var approved  = matched.filter(function(m){ return decisions[m.cat.id]==='approved'; }).length;
-  var skipped   = matched.filter(function(m){ return decisions[m.cat.id]==='skipped'; }).length;
-  var unmatched = matched.filter(function(m){ return decisions[m.cat.id]==='unmatched'; }).length;
+  var approved     = matched.filter(function(m){ return decisions[m.cat.id]==='approved' && !m.alreadyHas; }).length;
+  var reinjectCount= Object.keys(reinject).filter(function(k){ return reinject[k]; }).length;
+  var skipped      = matched.filter(function(m){ return decisions[m.cat.id]==='skipped'; }).length;
+  var unmatched    = matched.filter(function(m){ return decisions[m.cat.id]==='unmatched'; }).length;
 
   document.getElementById('pub-stat-grid').innerHTML =
-    '<div class="stat"><div class="stat-label">To publish</div><div class="stat-val green">' + approved + '</div></div>' +
+    '<div class="stat"><div class="stat-label">New</div><div class="stat-val green">' + approved + '</div></div>' +
+    '<div class="stat"><div class="stat-label">Re-inject</div><div class="stat-val" style="color:#f59e0b;">' + reinjectCount + '</div></div>' +
     '<div class="stat"><div class="stat-label">Skipped</div><div class="stat-val muted">' + skipped + '</div></div>' +
-    '<div class="stat"><div class="stat-label">Unmatched</div><div class="stat-val muted">' + unmatched + '</div></div>' +
     '<div class="stat"><div class="stat-label">Total</div><div class="stat-val">' + matched.length + '</div></div>';
   goStep(3);
 }
@@ -287,7 +335,7 @@ function plog(msg, type) {
   var box  = document.getElementById('pub-log');
   var line = document.createElement('div');
   line.className = 'log-' + type;
-  line.textContent = (type==='ok' ? '✓  ' : type==='err' ? '✗  ' : '   ') + msg;
+  line.textContent = (type==='ok'?'✓  ':type==='err'?'✗  ':'   ') + msg;
   box.appendChild(line);
   box.scrollTop = box.scrollHeight;
 }
@@ -297,25 +345,44 @@ async function runPublish() {
   btn.disabled = true; btn.textContent = 'Publishing…';
   document.getElementById('pub-log').innerHTML = '';
 
-  var toPublish  = matched.filter(function(m){ return decisions[m.cat.id]==='approved' && !m.alreadyHas; });
-  var alreadyDone = matched.filter(function(m){ return decisions[m.cat.id]==='approved' && m.alreadyHas; });
+  // New approvals (no existing section)
+  var toPublish = matched.filter(function(m){ return decisions[m.cat.id]==='approved' && !m.alreadyHas && !reinject[m.cat.id]; });
+  // Re-injects (strip old + write new)
+  var toReinject = matched.filter(function(m){ return !!reinject[m.cat.id]; });
 
-  plog('Starting — ' + toPublish.length + ' categor' + (toPublish.length!==1?'ies':'y') + ' to update', 'info');
-  if (alreadyDone.length) plog(alreadyDone.length + ' already updated — skipping', 'info');
+  plog('New: ' + toPublish.length + '  |  Re-inject: ' + toReinject.length, 'info');
 
   var ok = 0, fail = 0;
 
+  // Process new ones
   for (var i = 0; i < toPublish.length; i++) {
-    var m    = toPublish[i];
-    var cat  = m.cat;
-    var url  = m.url;
+    var m = toPublish[i];
+    await publishOne(m, false);
+  }
+
+  // Process re-injects — strip old section first, then append new one
+  for (var j = 0; j < toReinject.length; j++) {
+    var m = toReinject[j];
+    await publishOne(m, true);
+  }
+
+  plog('Done! ' + ok + ' updated' + (fail ? ', ' + fail + ' failed' : '') + '.', 'info');
+  btn.textContent = 'Run again'; btn.disabled = false;
+
+  async function publishOne(m, isReinject) {
+    var cat   = m.cat;
+    var url   = m.url;
     var title = m.title;
-    var newDesc = (cat.description || '') + affiliateSection(title, url);
+
+    if (!url) { plog('"' + title + '" — skipped (no URL)', 'info'); return; }
+
+    var cleanDesc = isReinject ? stripOldSection(cat.description) : (cat.description || '');
+    var newDesc   = cleanDesc + affiliateSection(title, url);
 
     if (wpConfig.wpUrl === 'http://demo') {
       await new Promise(function(r){ setTimeout(r, 450); });
-      plog('[DEMO] "' + title + '" — would update category #' + cat.id, 'ok');
-      ok++; continue;
+      plog('[DEMO] "' + title + '" — ' + (isReinject ? 're-injected' : 'updated') + ' ✓', 'ok');
+      ok++; return;
     }
 
     try {
@@ -332,17 +399,16 @@ async function runPublish() {
       });
       var data = await res.json();
       if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
-      plog('"' + title + '" — updated ✓', 'ok');
+      plog('"' + title + '" — ' + (isReinject ? 're-injected' : 'updated') + ' ✓', 'ok');
       m.alreadyHas = true;
+      cat.description = newDesc;
+      if (isReinject) delete reinject[cat.id];
       ok++;
     } catch(e) {
       plog('"' + title + '" — FAILED: ' + e.message, 'err');
       fail++;
     }
   }
-
-  plog('Done! ' + ok + ' updated' + (fail ? ', ' + fail + ' failed' : '') + '.', 'info');
-  btn.textContent = 'Run again'; btn.disabled = false;
 }
 
 function escHtml(s) {
