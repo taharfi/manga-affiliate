@@ -11,18 +11,15 @@ let currentTab = 'pending';
 // ── Affiliate HTML template ──────────────────────────────────────────────────
 function affiliateSection(title, url) {
   return '\n\n<!-- manga-affiliate-section -->\n' +
-    '<div style="border-top:2px solid #e2e8f0;margin-top:24px;padding-top:18px;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;">\n' +
-    '  <p style="font-size:15px;font-weight:700;margin:0 0 8px;">&#128218; Support the creator</p>\n' +
-    '  <p style="font-size:13px;color:#555;margin:0 0 12px;">Love reading <strong>' + escHtml(title) + '</strong>? Support the author by buying the official physical edition!</p>\n' +
-    '  <a href="' + escHtml(url) + '" target="_blank" rel="nofollow sponsored noopener"\n' +
-    '     style="display:inline-block;background:#ff9900;color:#000;text-decoration:none;padding:10px 22px;border-radius:6px;font-size:13px;font-weight:700;">\n' +
-    '    &#128722; Buy on Amazon\n' +
-    '  </a>\n' +
-    '  <p style="font-size:11px;color:#aaa;margin:10px 0 0;">As an Amazon Associate I earn from qualifying purchases.</p>\n' +
+    '<div style="margin-top:32px;padding:22px 24px;background:#1a1a2e;border-radius:12px;border:2px solid #7c3aed;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;text-align:center;">\n' +
+    '<p style="font-size:12px;font-weight:700;color:#a78bfa;letter-spacing:0.1em;text-transform:uppercase;margin:0 0 8px;">❤️ Support the Creator</p>\n' +
+    '<p style="font-size:15px;color:#e2e8f0;margin:0 0 18px;line-height:1.6;">Enjoyed reading <strong style="color:#fff;">' + escHtml(title) + '</strong>?<br>Get your official physical copy and support the author directly!</p>\n' +
+    '<a href="' + escHtml(url) + '" target="_blank" rel="nofollow noopener" ' +
+    'style="display:inline-block;background:#ff9900;color:#000;text-decoration:none;padding:14px 36px;border-radius:8px;font-size:15px;font-weight:800;letter-spacing:0.02em;">📖&nbsp; Get Physical Copy</a>\n' +
+    '<p style="font-size:11px;color:#64748b;margin:14px 0 0;font-style:italic;">Supporting creators helps bring more great manga to life.</p>\n' +
     '</div>\n' +
     '<!-- /manga-affiliate-section -->';
 }
-
 // ── Steps ────────────────────────────────────────────────────────────────────
 function goStep(n) {
   document.querySelectorAll('.step').forEach(function(s, i) { s.classList.toggle('active', i === n - 1); });
