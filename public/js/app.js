@@ -126,10 +126,13 @@ function loadDemo() {
 async function uploadCSV() {
   var file = document.getElementById('csv-file').files[0];
   if (!file) return;
-  var form = new FormData();
-  form.append('csv', file);
+  var text = await file.text();
   try {
-    var res  = await fetch('/api/parse-csv', { method: 'POST', body: form });
+    var res = await fetch('/api/parse-csv', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: text
+    });
     var data = await res.json();
     if (!res.ok) { alert('CSV error: ' + data.error); return; }
     csvData = data.csvData;
@@ -138,6 +141,7 @@ async function uploadCSV() {
     renderList();
   } catch(e) { alert('Failed to parse CSV: ' + e.message); }
 }
+
 
 // ── Matching ──────────────────────────────────────────────────────────────────
 function normalize(s) {
