@@ -167,17 +167,24 @@ function buildMatches() {
   allCats.forEach(function(cat) {
     var normName = normalize(cat.name);
     var url = null;
+
+    // First try to match from CSV
     Object.keys(csvData).forEach(function(k) {
       var nk = normalize(k);
       if (nk === normName || normName.includes(nk) || nk.includes(normName)) url = csvData[k];
     });
+
+    // If no CSV match, try to extract existing URL from the description
+    if (!url && cat.description) {
+      var urlMatch = cat.description.match(/href=["']([^"']+)["'][^>]*>\s*(?:📖|🛒|Buy|Get Physical)/);
+      if (urlMatch) url = urlMatch[1];
+    }
+
     var alreadyHas = hasOldSection(cat.description);
     matched.push({ cat: cat, url: url, title: cat.name, alreadyHas: alreadyHas });
-    // If it already has a section, put in approved. If matched, pending. Else unmatched.
     decisions[cat.id] = alreadyHas ? 'approved' : (url ? 'pending' : 'unmatched');
   });
 }
-
 // ── Stats ─────────────────────────────────────────────────────────────────────
 function renderStats() {
   var counts = { pending:0, approved:0, skipped:0, unmatched:0 };
