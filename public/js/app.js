@@ -25,17 +25,31 @@ function affiliateSection(title, url) {
 // Strip any existing affiliate section from a description string
 function stripOldSection(desc) {
   if (!desc) return '';
-  // Remove everything between the comment markers (inclusive)
-  var stripped = desc.replace(/<!-- manga-affiliate-section -->[\s\S]*?<!-- \/manga-affiliate-section -->/g, '');
-  // Also strip the old plain-text version that got injected without HTML
-  stripped = stripped.replace(/❤️\s*Support the [Cc]reator[\s\S]*?qualifying purchases\./g, '');
-  stripped = stripped.replace(/📚\s*Support the [Cc]reator[\s\S]*?qualifying purchases\./g, '');
-  stripped = stripped.replace(/🛒.*?Buy on Amazon[\s\S]*?qualifying purchases\./g, '');
-  // Remove leftover </p> we may have injected before
-  stripped = stripped.replace(/<\/p>\s*$/, '');
-  return stripped.trim();
-}
+  var s = desc;
 
+  // Strip HTML comment block version
+  s = s.replace(/<!-- manga-affiliate-section -->[\s\S]*?<!-- \/manga-affiliate-section -->/g, '');
+
+  // Strip the full injected div block (catches any version of our div)
+  s = s.replace(/<div[^>]*manga-affiliate[^>]*>[\s\S]*?<\/div>/g, '');
+
+  // Strip by content — any div containing "Support the Creator" or "Get Physical Copy"
+  s = s.replace(/<div[\s\S]*?Support the [Cc]reator[\s\S]*?<\/div>/g, '');
+  s = s.replace(/<div[\s\S]*?Get Physical Copy[\s\S]*?<\/div>/g, '');
+  s = s.replace(/<div[\s\S]*?Buy on Amazon[\s\S]*?<\/div>/g, '');
+
+  // Strip plain text version (no HTML tags — what got injected in your case)
+  s = s.replace(/[📚❤️🛒📖]\s*Support the [Cc]reator[\s\S]*?qualifying purchases\./g, '');
+  s = s.replace(/Support the [Cc]reator\s*Love reading[\s\S]*?qualifying purchases\./g, '');
+  s = s.replace(/Support the author by buying[\s\S]*?qualifying purchases\./g, '');
+  s = s.replace(/Get your official physical copy[\s\S]*?manga to life\./g, '');
+  s = s.replace(/Enjoyed reading[\s\S]*?manga to life\./g, '');
+
+  // Clean up any leftover </p> we injected
+  s = s.replace(/<\/p>\s*$/, '');
+
+  return s.trim();
+}
 // ── Steps ─────────────────────────────────────────────────────────────────────
 function goStep(n) {
   document.querySelectorAll('.step').forEach(function(s, i) { s.classList.toggle('active', i === n - 1); });
